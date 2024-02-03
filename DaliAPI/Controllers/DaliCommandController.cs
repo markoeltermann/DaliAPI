@@ -33,7 +33,11 @@ namespace DaliAPI.Controllers
 
             var addressByte = GetAddressByte(address);
             if (!string.IsNullOrEmpty(command))
+            {
                 addressByte += 1;
+                if (daliCommandByte > 0x1f)
+                    return BadRequest("configuration commands are not allowed");
+            }
 
             var portNames = SerialPort.GetPortNames().ToList();
             portNames.Sort();
@@ -58,6 +62,8 @@ namespace DaliAPI.Controllers
         [HttpGet("Switch/{address}")]
         public ActionResult Switch(string action, string direction, string address)
         {
+            logger.LogInformation("Switch address: {Address}, action: {Action}, direction: {Direction}", address, action, direction);
+
             action = action.ToLower();
             direction = direction.ToLower();
             address = address.ToLower();
@@ -102,7 +108,7 @@ namespace DaliAPI.Controllers
 
                     Task.Run(() =>
                     {
-                        //Thread.Sleep(50);
+                        Thread.Sleep(50);
 
                         for (int i = 0; i < 15; i++)
                         {
@@ -164,7 +170,11 @@ namespace DaliAPI.Controllers
 
         private static byte GetAddressByte(string address)
         {
-            if (address.StartsWith('a'))
+            if (address == "all")
+            {
+                return 0xfe;
+            }
+            else if (address.StartsWith('a'))
             {
                 if (byte.TryParse(address[1..], out var lampAddress) && lampAddress is >= 0 and <= 63)
                 {

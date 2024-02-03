@@ -1,0 +1,19 @@
+﻿@using UserInterface.Services
+@inject Sender sender
+
+<div class="mt-3 d-flex justify-content-center align-items-center">
+    <span class="text-light fs-4 me-3 light-label text-end">@Address</span>
+    <button type="button" class="btn btn-light btn-lg light-button me-3"
+            @onpointerdown='() => sender.Send(Address, "hold", "down")' @onpointerup='() => sender.Send(Address, "release", "down")'>
+        -
+    </button>
+    <button type="button" class="btn btn-light btn-lg light-button"
+            @onpointerdown='() => sender.Send(Address, "hold", "up")' @onpointerup='() => sender.Send(Address, "release", "up")'>
+        +
+    </button>
+</div>
+
+@code {
+    [Parameter]
+    public string Address { get; set; } = "All";
+}

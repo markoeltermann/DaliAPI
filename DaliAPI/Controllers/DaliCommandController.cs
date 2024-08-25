@@ -73,6 +73,8 @@ namespace DaliAPI.Controllers
 
             var addressByte = GetAddressByte(address);
 
+            string? message = null;
+
             lock (switchStateLock)
             {
                 var switchState = switchStates.GetValueOrDefault(addressByte);
@@ -93,55 +95,111 @@ namespace DaliAPI.Controllers
                     return Ok("reset");
                 }
 
+
                 if (isHold)
                 {
                     if (switchState.IsDownActive || switchState.IsUpActive || switchState.IsDimmingDown || switchState.IsDimmingUp)
                     {
+                        //logger.LogInformation("Resetting");
                         switchState.Reset();
-                        return Ok("reset");
+                        //return Ok("reset");
                     }
 
                     if (isUp)
-                        switchState.IsUpActive = true;
-                    else
-                        switchState.IsDownActive = true;
-
-                    Task.Run(() =>
                     {
-                        Thread.Sleep(50);
-
-                        for (int i = 0; i < 15; i++)
+                        switchState.IsUpActive = true;
+                        if (!switchState.IsOn)
                         {
-                            Thread.Sleep(200);
+                            //logger.LogInformation("Turning instant on");
+                            SendDaliCommand((byte)(addressByte + 1), DaliCommands.GoToLastActiveLevel);
+                            switchState.IsOn = true;
+                        }
+                    }
+                    else
+                    {
+                        switchState.IsDownActive = true;
+                    }
+
+                    if (switchState.IsOn)
+                    {
+                        Task.Run(() =>
+                        {
+                            int counter = 0;
                             lock (switchStateLock)
                             {
-                                if ((!switchState.IsUpActive && !switchState.IsDownActive) || (switchState.IsUpActive && !isUp) || (switchState.IsDownActive && isUp))
+                                counter = ++switchState.JobCounter;
+                            }
+
+                            Thread.Sleep(150);
+
+                            for (int i = 0; i < 15; i++)
+                            {
+                                Thread.Sleep(200);
+                                lock (switchStateLock)
                                 {
-                                    if (isUp)
-                                        switchState.IsDimmingUp = false;
+                                    if (counter != switchState.JobCounter)
+                                        return;
+
+                                    if ((!switchState.IsUpActive && !switchState.IsDownActive) || (switchState.IsUpActive && !isUp) || (switchState.IsDownActive && isUp))
+                                    {
+                                        if (isUp)
+                                            switchState.IsDimmingUp = false;
+                                        else
+                                            switchState.IsDimmingDown = false;
+                                        return;
+                                    }
                                     else
-                                        switchState.IsDimmingDown = false;
-                                    return;
+                                    {
+                                        if (isUp)
+                                            switchState.IsDimmingUp = true;
+                                        else
+                                            switchState.IsDimmingDown = true;
+                                    }
                                 }
-                                else
+                                SendDaliCommand((byte)(addressByte + 1), isUp ? DaliCommands.Up : DaliCommands.Down);
+                            }
+                            //lock (switchStateLock)
+                            //{
+                            //    if (isUp)
+                            //        switchState.IsDimmingUp = false;
+                            //    else
+                            //        switchState.IsDimmingDown = false;
+                            //}
+                            if (isUp)
+                            {
+                                lock (switchStateLock)
                                 {
-                                    if (isUp)
-                                        switchState.IsDimmingUp = true;
-                                    else
-                                        switchState.IsDimmingDown = true;
+                                    if (counter != switchState.JobCounter)
+                                        return;
+
+                                    switchState.IsDimmingUp = false;
                                 }
                             }
-                            SendDaliCommand((byte)(addressByte + 1), isUp ? (byte)0x01 : (byte)0x02);
-                        }
-                        lock (switchStateLock)
-                        {
-                            if (isUp)
-                                switchState.IsDimmingUp = false;
                             else
-                                switchState.IsDimmingDown = false;
-                        }
-                    });
-                    return Ok("hold registered");
+                            {
+                                //logger.LogInformation("Waiting 800 ms until turnoff");
+                                Thread.Sleep(400);
+                                //logger.LogInformation("800 ms wait over");
+
+                                lock (switchStateLock)
+                                {
+                                    if (counter != switchState.JobCounter)
+                                        return;
+
+                                    switchState.IsDimmingDown = false;
+                                    if (!switchState.IsDownActive)
+                                        return;
+                                    else
+                                        switchState.IsOn = false;
+                                }
+
+                                //logger.LogInformation("Dimming to off");
+
+                                SendDaliCommand(addressByte, 0x00);
+                            }
+                        });
+                    }
+                    message = "hold registered";
                 }
                 else // release
                 {
@@ -156,16 +214,32 @@ namespace DaliAPI.Controllers
                         switchState.IsDownActive = false;
 
                     if (switchState.IsDimmingDown || switchState.IsDimmingUp)
-                        return Ok("dimming has already started");
-
-                    if (isUp)
-                        SendDaliCommand((byte)(addressByte + 1), 0x0a);
+                    {
+                        message = "dimming has already started";
+                    }
                     else
-                        SendDaliCommand(addressByte, 0x00);
+                    {
 
-                    return Ok("switch command sent");
+                        //if (isUp)
+                        //{
+                        //    //SendDaliCommand((byte)(addressByte + 1), DaliCommands.GoToLastActiveLevel);
+                        //    //switchState.IsOn = true;
+                        //}
+                        //else
+                        if (!isUp && switchState.IsOn)
+                        {
+                            //logger.LogInformation("Switching to off");
+
+                            SendDaliCommand(addressByte, 0x00);
+                            switchState.IsOn = false;
+                        }
+
+                        message = "switch command sent";
+                    }
                 }
-            }
+            } // end lock
+
+            return Ok(message);
         }
 
         private static byte GetAddressByte(string address)
@@ -235,10 +309,14 @@ namespace DaliAPI.Controllers
 
         private class SwitchState
         {
+            public int JobCounter;
+
             public bool IsUpActive;
             public bool IsDownActive;
             public bool IsDimmingUp;
             public bool IsDimmingDown;
+
+            public bool IsOn;
 
             public void Reset()
             {
